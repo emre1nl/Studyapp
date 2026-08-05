@@ -30,10 +30,9 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 const provider = new GoogleAuthProvider();
 
+window._myLastWrite = 0; // Global — her yerden erişilir
 let syncTimeout = null;
-let myLastWrite = 0;
 
-// UI güncelle
 function applyCloud(data) {
   Object.assign(window.D, data);
   localStorage.setItem('ss4', JSON.stringify(window.D));
@@ -43,23 +42,21 @@ function applyCloud(data) {
     renderJournal(); renderSub(); renderSess();
     document.getElementById('bookBadge').textContent = window.D.books.length;
     toast('☁️ Senkronize edildi!');
-  } catch(e){}
+  } catch(e){ console.error('applyCloud hata:', e); }
 }
 
-// Firebase'e kaydet
 function fbSave() {
-  if(!window.fbUser) return;
-  window.D._savedAt = Date.now();
-  myLastWrite = window.D._savedAt;
+  if(!window.fbUser || !window.D) return;
+  const ts = Date.now();
+  window.D._savedAt = ts;
+  window._myLastWrite = ts; // ÖNCE flag'i set et
   localStorage.setItem('ss4', JSON.stringify(window.D));
   set(ref(db, 'users/' + window.fbUser.uid), window.D)
-    .catch(e => console.error('Kayıt hatası:', e));
+    .catch(e => console.error('Firebase kayıt hatası:', e));
 }
 
 onAuthStateChanged(auth, user => {
   window.fbUser = user;
-
-  // UI
   const btn = document.getElementById('authBtn');
   const userInfo = document.getElementById('userInfo');
   const dot = document.getElementById('authDot');
@@ -71,23 +68,15 @@ onAuthStateChanged(auth, user => {
     if(dot){ dot.style.background='var(--accent)'; dot.style.boxShadow='0 0 8px var(--accent)'; }
     if(wt) wt.textContent = user.displayName||user.email;
 
-    // Firebase'i dinle
-    const userRef = ref(db, 'users/' + user.uid);
-    onValue(userRef, snap => {
+    onValue(ref(db, 'users/'+user.uid), snap => {
       const cloud = snap.val();
-
-      // Cloud boşsa local'i gönder
-      if(!cloud || !cloud._savedAt) { fbSave(); return; }
-
-      // Bu bizim kendi yazmamızsa atla
-      if(cloud._savedAt === myLastWrite) return;
-
-      // Başka cihazdan geldi VEYA ilk açılış — cloud'u uygula
-      applyCloud(cloud);
+      if(!cloud || !cloud._savedAt) { fbSave(); return; } // Cloud boş → local gönder
+      if(cloud._savedAt === window._myLastWrite) return;  // Bizim yazmamız → atla
+      applyCloud(cloud);                                   // Başka cihaz → uygula
     });
 
   } else {
-    if(btn){ btn.textContent='🔑 Google ile Giriş'; btn.onclick=()=>signInWithPopup(auth, provider).catch(e=>toast('❌ '+e.message)); }
+    if(btn){ btn.textContent='🔑 Google ile Giriş'; btn.onclick=()=>signInWithPopup(auth,provider).catch(e=>toast('❌ '+e.message)); }
     if(userInfo) userInfo.textContent='Giriş yapılmadı';
     if(dot){ dot.style.background='var(--text3)'; dot.style.boxShadow='none'; }
     if(wt) wt.textContent='Giriş yapılmadı';
@@ -96,9 +85,9 @@ onAuthStateChanged(auth, user => {
 
 window.fbSave = fbSave;
 window.fbUser = null;
-window.fbSignIn = () => signInWithPopup(auth, provider).catch(e=>toast('❌ '+e.message));
-window.fbSignOut = () => signOut(auth).then(()=>toast('👋 Çıkış yapıldı.'));
-window.scheduleSync = function() {
+window.fbSignIn = ()=>signInWithPopup(auth,provider).catch(e=>toast('❌ '+e.message));
+window.fbSignOut = ()=>signOut(auth).then(()=>toast('👋 Çıkış yapıldı.'));
+window.scheduleSync = function(){
   if(syncTimeout) clearTimeout(syncTimeout);
   syncTimeout = setTimeout(fbSave, 1500);
 };
