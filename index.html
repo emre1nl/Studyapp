@@ -13,7 +13,7 @@
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getDatabase, ref, set, onValue } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { getDatabase, ref, set, onValue, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyC8G5ceR7faNw5rosM1A8A2piTXymVrMrY",
@@ -32,70 +32,95 @@ const provider = new GoogleAuthProvider();
 
 let fbUser = null;
 let syncTimeout = null;
-let skipNextRead = false;
+let myWriteTimestamp = 0; // Bu cihazın son yazma zamanı
+let initialLoadDone = false; // İlk yükleme yapıldı mı
+
+function applyCloudData(cloudData) {
+  Object.assign(window.D, cloudData);
+  localStorage.setItem('ss4', JSON.stringify(window.D));
+  try {
+    updateDash(); updateXPUI(); renderBooks(); renderGoals();
+    renderQ(); renderDecks(); renderExams(); renderAch();
+    renderJournal(); renderSub(); renderSess();
+    document.getElementById('bookBadge').textContent = window.D.books.length;
+    toast('☁️ Senkronize edildi!');
+  } catch(e) { console.error(e); }
+}
 
 onAuthStateChanged(auth, user => {
   fbUser = user;
   window.fbUser = user;
+  initialLoadDone = false;
+
   const btn = document.getElementById('authBtn');
   const userInfo = document.getElementById('userInfo');
+  const dot = document.getElementById('authDot');
+  const wt = document.getElementById('authWidgetTxt');
 
   if (user) {
-    if(btn){ btn.textContent='🚪 Çıkış Yap'; btn.onclick=fbSignOut; }
+    if(btn){ btn.textContent='🚪 Çıkış Yap'; btn.onclick=()=>signOut(auth); }
     if(userInfo) userInfo.textContent = user.displayName || user.email;
-    const dot=document.getElementById('authDot'); if(dot){dot.style.background='var(--accent)';dot.style.boxShadow='0 0 8px var(--accent)';}
-    const wt=document.getElementById('authWidgetTxt'); if(wt) wt.textContent=user.displayName||user.email;
+    if(dot){ dot.style.background='var(--accent)'; dot.style.boxShadow='0 0 8px var(--accent)'; }
+    if(wt) wt.textContent = user.displayName || user.email;
 
     const userRef = ref(db, 'users/' + user.uid);
+
     onValue(userRef, snapshot => {
-      // Kendi yazmamızdan hemen sonra gelen echo'yu atla
-      if(skipNextRead){ skipNextRead=false; return; }
-
       const cloudData = snapshot.val();
-      if(!cloudData){ fbSave(); return; }
 
-      // Cloud'u her zaman uygula
-      Object.assign(D, cloudData);
-      localStorage.setItem('ss4', JSON.stringify(D));
-      try {
-        updateDash(); updateXPUI(); renderBooks(); renderGoals();
-        renderQ(); renderDecks(); renderExams(); renderAch();
-        renderJournal(); renderSub(); renderSess();
-        document.getElementById('bookBadge').textContent = D.books.length;
-      } catch(e){}
+      // İlk yükleme: Cloud vs Local karşılaştır
+      if (!initialLoadDone) {
+        initialLoadDone = true;
+        if (!cloudData) {
+          // Cloud boş → local'i gönder
+          fbSaveNow();
+        } else {
+          const cloudTime = cloudData._savedAt || 0;
+          const localTime = (window.D && window.D._savedAt) || 0;
+          if (cloudTime > localTime) {
+            // Cloud daha yeni → indir
+            applyCloudData(cloudData);
+          } else {
+            // Local daha yeni → cloud'a gönder
+            fbSaveNow();
+          }
+        }
+        return;
+      }
+
+      // Sonraki güncellemeler: başka cihazdan mı geldi?
+      if (!cloudData) return;
+      const cloudTime = cloudData._savedAt || 0;
+      // Eğer bu bizim yazmamız değilse uygula
+      if (cloudTime !== myWriteTimestamp) {
+        applyCloudData(cloudData);
+      }
     });
 
   } else {
-    if(btn){ btn.textContent='🔑 Google ile Giriş'; btn.onclick=fbSignIn; }
+    if(btn){ btn.textContent='🔑 Google ile Giriş'; btn.onclick=()=>signInWithPopup(auth, provider).catch(e=>toast('❌ '+e.message)); }
     if(userInfo) userInfo.textContent='Giriş yapılmadı';
-    const adot=document.getElementById('authDot'); if(adot){adot.style.background='var(--text3)';adot.style.boxShadow='none';}
-    const wt=document.getElementById('authWidgetTxt'); if(wt) wt.textContent='Giriş yapılmadı';
+    if(dot){ dot.style.background='var(--text3)'; dot.style.boxShadow='none'; }
+    if(wt) wt.textContent='Giriş yapılmadı';
   }
 });
 
-function fbSignIn() {
-  signInWithPopup(auth, provider).catch(err => toast('❌ Giriş hatası: ' + err.message));
-}
-function fbSignOut() {
-  signOut(auth).then(() => toast('👋 Çıkış yapıldı.')).catch(err => toast('❌ ' + err.message));
-}
-function fbSave() {
-  if(!fbUser) return;
-  D._savedAt = Date.now();
-  localStorage.setItem('ss4', JSON.stringify(D));
-  skipNextRead = true;
-  set(ref(db, 'users/' + fbUser.uid), D)
-    .catch(err => { skipNextRead=false; console.error('Firebase hata:', err); });
+function fbSaveNow() {
+  if(!fbUser || !window.D) return;
+  window.D._savedAt = Date.now();
+  myWriteTimestamp = window.D._savedAt;
+  localStorage.setItem('ss4', JSON.stringify(window.D));
+  set(ref(db, 'users/' + fbUser.uid), window.D)
+    .catch(err => console.error('Firebase kayıt hatası:', err));
 }
 
-window.fbSave = fbSave;
-window.fbSignIn = fbSignIn;
-window.fbSignOut = fbSignOut;
+window.fbSave = fbSaveNow;
+window.fbSignIn = () => signInWithPopup(auth, provider).catch(e => toast('❌ '+e.message));
+window.fbSignOut = () => signOut(auth).then(()=>toast('👋 Çıkış yapıldı.'));
 window.fbUser = null;
-window.fbDb = (path, val) => set(ref(db, path), val);
 window.scheduleSync = function() {
   if(syncTimeout) clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(() => { if(window.fbSave) window.fbSave(); }, 1000);
+  syncTimeout = setTimeout(fbSaveNow, 1500);
 };
 </script>
 <style>
@@ -1075,6 +1100,7 @@ let D = JSON.parse(localStorage.getItem('ss4')||'null') || {
   subjects:['TYT Türkçe','TYT Sosyal','TYT Mat','TYT Fizik','TYT Kimya','TYT Biyoloji','AYT Mat','AYT Fizik','AYT Kimya','AYT Biyoloji','AYT-TYT Geometri'],
   ach:{}, manualEntries:0, totalWater:0, pomodoroTotal:0,
 };
+window.D = D; // Firebase modülünden erişim için
 // Migrate old saves missing new fields
 if(D.manualEntries===undefined) D.manualEntries=0;
 if(D.totalWater===undefined) D.totalWater=0;
