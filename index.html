@@ -32,7 +32,7 @@ const provider = new GoogleAuthProvider();
 
 let fbUser = null;
 let syncTimeout = null;
-let lastWriteTime = 0;
+let skipNextRead = false;
 
 onAuthStateChanged(auth, user => {
   fbUser = user;
@@ -48,22 +48,23 @@ onAuthStateChanged(auth, user => {
 
     const userRef = ref(db, 'users/' + user.uid);
     onValue(userRef, snapshot => {
+      // Kendi yazmamızdan hemen sonra gelen echo'yu atla
+      if(skipNextRead){ skipNextRead=false; return; }
+
       const cloudData = snapshot.val();
-      if (!cloudData || !cloudData._savedAt) { fbSave(); return; }
-      const cloudTime = cloudData._savedAt || 0;
-      // Eğer bu değişikliği biz yazmadıysak uygula
-      if (cloudTime > lastWriteTime + 500) {
-        Object.assign(D, cloudData);
-        localStorage.setItem('ss4', JSON.stringify(D));
-        try {
-          updateDash(); updateXPUI(); renderBooks(); renderGoals();
-          renderQ(); renderDecks(); renderExams(); renderAch();
-          renderJournal(); renderSub(); renderSess();
-          document.getElementById('bookBadge').textContent = D.books.length;
-          toast('☁️ Senkronize edildi!');
-        } catch(e){}
-      }
+      if(!cloudData){ fbSave(); return; }
+
+      // Cloud'u her zaman uygula
+      Object.assign(D, cloudData);
+      localStorage.setItem('ss4', JSON.stringify(D));
+      try {
+        updateDash(); updateXPUI(); renderBooks(); renderGoals();
+        renderQ(); renderDecks(); renderExams(); renderAch();
+        renderJournal(); renderSub(); renderSess();
+        document.getElementById('bookBadge').textContent = D.books.length;
+      } catch(e){}
     });
+
   } else {
     if(btn){ btn.textContent='🔑 Google ile Giriş'; btn.onclick=fbSignIn; }
     if(userInfo) userInfo.textContent='Giriş yapılmadı';
@@ -79,12 +80,12 @@ function fbSignOut() {
   signOut(auth).then(() => toast('👋 Çıkış yapıldı.')).catch(err => toast('❌ ' + err.message));
 }
 function fbSave() {
-  if (!fbUser) return;
+  if(!fbUser) return;
   D._savedAt = Date.now();
-  lastWriteTime = D._savedAt;
   localStorage.setItem('ss4', JSON.stringify(D));
+  skipNextRead = true;
   set(ref(db, 'users/' + fbUser.uid), D)
-    .catch(err => console.error('Firebase hata:', err));
+    .catch(err => { skipNextRead=false; console.error('Firebase hata:', err); });
 }
 
 window.fbSave = fbSave;
@@ -93,7 +94,7 @@ window.fbSignOut = fbSignOut;
 window.fbUser = null;
 window.fbDb = (path, val) => set(ref(db, path), val);
 window.scheduleSync = function() {
-  if (syncTimeout) clearTimeout(syncTimeout);
+  if(syncTimeout) clearTimeout(syncTimeout);
   syncTimeout = setTimeout(() => { if(window.fbSave) window.fbSave(); }, 1000);
 };
 </script>
