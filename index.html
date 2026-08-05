@@ -72,7 +72,12 @@ onAuthStateChanged(auth, user => {
       const cloud = snap.val();
       if(!cloud || !cloud._savedAt) { fbSave(); return; } // Cloud boş → local gönder
       if(cloud._savedAt === window._myLastWrite) return;  // Bizim yazmamız → atla
-      applyCloud(cloud);                                   // Başka cihaz → uygula
+      const localTime = window.D._savedAt || 0;
+      if(cloud._savedAt > localTime) {
+        applyCloud(cloud); // Cloud daha yeni → uygula
+      } else {
+        fbSave(); // Local daha yeni → cloud'u güncelle
+      }
     });
 
   } else {
