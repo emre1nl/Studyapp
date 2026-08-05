@@ -30,11 +30,15 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 const provider = new GoogleAuthProvider();
 
-window._myLastWrite = 0; // Global — her yerden erişilir
+window._myLastWrite = 0;
+window.isApplyingCloud = false;
 let syncTimeout = null;
 
+// Cloud verisini uygula — save tetiklenmez
 function applyCloud(data) {
+  window.isApplyingCloud = true;
   Object.assign(window.D, data);
+  window.D._savedAt = data._savedAt; // Cloud timestamp'i koru
   localStorage.setItem('ss4', JSON.stringify(window.D));
   try {
     updateDash(); updateXPUI(); renderBooks(); renderGoals();
@@ -43,13 +47,17 @@ function applyCloud(data) {
     document.getElementById('bookBadge').textContent = window.D.books.length;
     toast('☁️ Senkronize edildi!');
   } catch(e){ console.error('applyCloud hata:', e); }
+  // 3 saniye sonra flag'i kaldır (scheduleSync'in tetiklenmesine izin ver)
+  setTimeout(() => { window.isApplyingCloud = false; }, 3000);
 }
 
+// Firebase'e kaydet — isApplyingCloud true iken çalışmaz
 function fbSave() {
   if(!window.fbUser || !window.D) return;
+  if(window.isApplyingCloud) return; // Cloud uygulanırken yazma
   const ts = Date.now();
   window.D._savedAt = ts;
-  window._myLastWrite = ts; // ÖNCE flag'i set et
+  window._myLastWrite = ts;
   localStorage.setItem('ss4', JSON.stringify(window.D));
   set(ref(db, 'users/' + window.fbUser.uid), window.D)
     .catch(e => console.error('Firebase kayıt hatası:', e));
@@ -70,14 +78,22 @@ onAuthStateChanged(auth, user => {
 
     onValue(ref(db, 'users/'+user.uid), snap => {
       const cloud = snap.val();
-      if(!cloud || !cloud._savedAt) { fbSave(); return; } // Cloud boş → local gönder
-      if(cloud._savedAt === window._myLastWrite) return;  // Bizim yazmamız → atla
+
+      // Cloud boşsa sadece ilk açılışta gönder
+      if(!cloud || !cloud._savedAt) {
+        if(!window._myLastWrite) fbSave();
+        return;
+      }
+
+      // Bizim yazmamızsa atla
+      if(cloud._savedAt === window._myLastWrite) return;
+
       const localTime = window.D._savedAt || 0;
       if(cloud._savedAt > localTime) {
-        applyCloud(cloud); // Cloud daha yeni → uygula
-      } else {
-        fbSave(); // Local daha yeni → cloud'u güncelle
+        // Cloud daha yeni → uygula (fbSave ÇALIŞMAZ)
+        applyCloud(cloud);
       }
+      // Cloud eskiyse HİÇBİR ŞEY YAPMA — telefon kendi verisini zaten yazdı
     });
 
   } else {
@@ -93,6 +109,7 @@ window.fbUser = null;
 window.fbSignIn = ()=>signInWithPopup(auth,provider).catch(e=>toast('❌ '+e.message));
 window.fbSignOut = ()=>signOut(auth).then(()=>toast('👋 Çıkış yapıldı.'));
 window.scheduleSync = function(){
+  if(window.isApplyingCloud) return; // Cloud uygulanırken zamanlamayı iptal et
   if(syncTimeout) clearTimeout(syncTimeout);
   syncTimeout = setTimeout(fbSave, 1500);
 };
