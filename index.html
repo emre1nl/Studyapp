@@ -452,6 +452,7 @@ kbd{background:var(--bg3);border:1px solid var(--border);border-radius:4px;paddi
 
   /* QUICK BTN - moved up from bottom nav */
   .quick-btn{bottom:80px!important;right:14px!important}
+  #syncFloatBtn{bottom:132px!important;right:14px!important}
 
   /* PAGE HEADER */
   .ph{font-size:18px!important}
@@ -1059,6 +1060,7 @@ kbd{background:var(--bg3);border:1px solid var(--border);border-radius:4px;paddi
 
 <div class="toast" id="toast"></div>
 <div class="celeb" id="celeb" style="display:none"><div class="celeb-txt" id="celebTxt">🎉</div></div>
+<button id="syncFloatBtn" onclick="manualSync()" title="Senkronize Et" style="position:fixed;bottom:76px;right:22px;width:44px;height:44px;border-radius:50%;background:var(--surface);border:1px solid var(--border);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow);z-index:500;transition:all .2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">🔄</button>
 <button class="quick-btn" onclick="openQuick()" title="Hızlı Not (Ctrl+Q)">+</button>
 
 <!-- FOCUS OVERLAY -->
