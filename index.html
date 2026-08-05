@@ -13,7 +13,7 @@
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getDatabase, ref, set, onValue, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { getDatabase, ref, set, onValue } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyC8G5ceR7faNw5rosM1A8A2piTXymVrMrY",
@@ -30,13 +30,12 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 const provider = new GoogleAuthProvider();
 
-let fbUser = null;
 let syncTimeout = null;
-let myWriteTimestamp = 0; // Bu cihazın son yazma zamanı
-let initialLoadDone = false; // İlk yükleme yapıldı mı
+let myLastWrite = 0;
 
-function applyCloudData(cloudData) {
-  Object.assign(window.D, cloudData);
+// UI güncelle
+function applyCloud(data) {
+  Object.assign(window.D, data);
   localStorage.setItem('ss4', JSON.stringify(window.D));
   try {
     updateDash(); updateXPUI(); renderBooks(); renderGoals();
@@ -44,14 +43,23 @@ function applyCloudData(cloudData) {
     renderJournal(); renderSub(); renderSess();
     document.getElementById('bookBadge').textContent = window.D.books.length;
     toast('☁️ Senkronize edildi!');
-  } catch(e) { console.error(e); }
+  } catch(e){}
+}
+
+// Firebase'e kaydet
+function fbSave() {
+  if(!window.fbUser) return;
+  window.D._savedAt = Date.now();
+  myLastWrite = window.D._savedAt;
+  localStorage.setItem('ss4', JSON.stringify(window.D));
+  set(ref(db, 'users/' + window.fbUser.uid), window.D)
+    .catch(e => console.error('Kayıt hatası:', e));
 }
 
 onAuthStateChanged(auth, user => {
-  fbUser = user;
   window.fbUser = user;
-  initialLoadDone = false;
 
+  // UI
   const btn = document.getElementById('authBtn');
   const userInfo = document.getElementById('userInfo');
   const dot = document.getElementById('authDot');
@@ -59,42 +67,23 @@ onAuthStateChanged(auth, user => {
 
   if (user) {
     if(btn){ btn.textContent='🚪 Çıkış Yap'; btn.onclick=()=>signOut(auth); }
-    if(userInfo) userInfo.textContent = user.displayName || user.email;
+    if(userInfo) userInfo.textContent = user.displayName||user.email;
     if(dot){ dot.style.background='var(--accent)'; dot.style.boxShadow='0 0 8px var(--accent)'; }
-    if(wt) wt.textContent = user.displayName || user.email;
+    if(wt) wt.textContent = user.displayName||user.email;
 
+    // Firebase'i dinle
     const userRef = ref(db, 'users/' + user.uid);
+    onValue(userRef, snap => {
+      const cloud = snap.val();
 
-    onValue(userRef, snapshot => {
-      const cloudData = snapshot.val();
+      // Cloud boşsa local'i gönder
+      if(!cloud || !cloud._savedAt) { fbSave(); return; }
 
-      // İlk yükleme: Cloud vs Local karşılaştır
-      if (!initialLoadDone) {
-        initialLoadDone = true;
-        if (!cloudData) {
-          // Cloud boş → local'i gönder
-          fbSaveNow();
-        } else {
-          const cloudTime = cloudData._savedAt || 0;
-          const localTime = (window.D && window.D._savedAt) || 0;
-          if (cloudTime > localTime) {
-            // Cloud daha yeni → indir
-            applyCloudData(cloudData);
-          } else {
-            // Local daha yeni → cloud'a gönder
-            fbSaveNow();
-          }
-        }
-        return;
-      }
+      // Bu bizim kendi yazmamızsa atla
+      if(cloud._savedAt === myLastWrite) return;
 
-      // Sonraki güncellemeler: başka cihazdan mı geldi?
-      if (!cloudData) return;
-      const cloudTime = cloudData._savedAt || 0;
-      // Eğer bu bizim yazmamız değilse uygula
-      if (cloudTime !== myWriteTimestamp) {
-        applyCloudData(cloudData);
-      }
+      // Başka cihazdan geldi VEYA ilk açılış — cloud'u uygula
+      applyCloud(cloud);
     });
 
   } else {
@@ -105,22 +94,13 @@ onAuthStateChanged(auth, user => {
   }
 });
 
-function fbSaveNow() {
-  if(!fbUser || !window.D) return;
-  window.D._savedAt = Date.now();
-  myWriteTimestamp = window.D._savedAt;
-  localStorage.setItem('ss4', JSON.stringify(window.D));
-  set(ref(db, 'users/' + fbUser.uid), window.D)
-    .catch(err => console.error('Firebase kayıt hatası:', err));
-}
-
-window.fbSave = fbSaveNow;
-window.fbSignIn = () => signInWithPopup(auth, provider).catch(e => toast('❌ '+e.message));
-window.fbSignOut = () => signOut(auth).then(()=>toast('👋 Çıkış yapıldı.'));
+window.fbSave = fbSave;
 window.fbUser = null;
+window.fbSignIn = () => signInWithPopup(auth, provider).catch(e=>toast('❌ '+e.message));
+window.fbSignOut = () => signOut(auth).then(()=>toast('👋 Çıkış yapıldı.'));
 window.scheduleSync = function() {
   if(syncTimeout) clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(fbSaveNow, 1500);
+  syncTimeout = setTimeout(fbSave, 1500);
 };
 </script>
 <style>
